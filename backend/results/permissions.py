@@ -11,3 +11,12 @@ class IsAdminOrReadOnly(BasePermission):
         if request.method in ['GET', 'HEAD', 'OPTIONS']:
             return True
         return request.user and request.user.is_staff
+
+class IsAgentOrIsAdminUser(BasePermission):
+    """
+    Allow access if user is authenticated AND is agent OR is admin/staff.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        return user.is_authenticated and (user.is_staff or getattr(user, 'is_agent', False))
+    

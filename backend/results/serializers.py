@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 from election import settings
-from .models import PollingStation, DRForm, User
+from .models import PollingStation, DRForm, User, Report, AbstractUser, Agent, NupNews
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -13,11 +13,29 @@ class PollingStationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class DRFormUploadSerializer(serializers.ModelSerializer):
-    # upload serializer: agent provides file + metadata; server verifies hash
+    # Accepts either polling station ID or station_id string
+    polling_station = serializers.CharField()
+
     class Meta:
         model = DRForm
-        fields = ('id', 'polling_station', 'image', 'sha256_hash', 'totals', 'gps')
-        read_only_fields = ('id',)
+        fields = ['polling_station', 'image', 'video', 'sha256_hash', 'totals', 'gps']
+
+    def validate_polling_station(self, value):
+        # Try to match station by ID or by station_id
+        try:
+            # If the frontend sent a numeric ID, this will work
+            if value.isdigit():
+                return PollingStation.objects.get(pk=int(value))
+            # Otherwise try to match by station_id or name
+            return PollingStation.objects.get(station_id=value)
+        except PollingStation.DoesNotExist:
+            try:
+                return PollingStation.objects.get(name=value)
+            except PollingStation.DoesNotExist:
+                raise serializers.ValidationError("Polling station not found")
+
+    def create(self, validated_data):
+        return DRForm.objects.create(**validated_data)
 
 class DRFormPublicSerializer(serializers.ModelSerializer):
     polling_station = PollingStationSerializer(read_only=True)
@@ -118,3 +136,36 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'is_staff', 'is_agent']
+
+class ReportSerializer(serializers.ModelSerializer):
+    reported_by = serializers.StringRelatedField(read_only=True)
+    dr_form = DRFormSerializer(read_only=True)
+
+    class Meta:
+        model = Report
+        fields = '__all__'
+
+class AgentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Agent
+        fields = '__all__'
+
+class AgentRegisterSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = Agent
+        fields = ["username", "password", "polling_station", "phone_number", "id_number"]
+
+    def create(self, validated_data):
+        username = validated_data.pop("username")
+        password = validated_data.pop("password")
+        user = User.objects.create_user(username=username, password=password)
+        agent = Agent.objects.create(user=user, **validated_data)
+        return agent
+    
+class NupNewsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NupNews
+        fields = '__all__'
